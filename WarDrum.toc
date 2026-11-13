@@ -1,0 +1,11 @@
+## Interface: 16001
+## Title: War Drum
+## Notes: A small list of the enemy players who attack you: name in class color, level, class and how often they killed you. Warns you with a war drum when one is near. /wd
+## Author: Tk Deadeye
+## Version: 0.9.0
+## IconTexture: Interface\Icons\INV_Misc_Bone_HumanSkull_01
+## SavedVariables: WarDrumDB
+## AddonCompartmentFunc: WarDrum_OnAddonCompartmentClick
+## X-Category: PvP
+
+WarDrum.lua
