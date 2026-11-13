@@ -59,6 +59,8 @@ function UnitIsUnit(a, b)
 end
 function UnitAffectingCombat(u) return U(u) and U(u).fighting end
 function UnitIsDeadOrGhost(u) return U(u) and U(u).dead end
+harmful = {}       -- spell id -> true: C_Spell.IsSpellHarmful
+C_Spell = {IsSpellHarmful = function(id) return harmful[id] == true end}
 function GetPlayerInfoByGUID(g)
 	for _, v in pairs(known) do
 		if v.guid == g then return "x", v.class, "r", "R", 2, v.name, v.second or "" end

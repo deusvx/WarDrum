@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.1 (beta)
+From the first real fights.
+
+- **Fights you started:** recognised by your own first move (a harmful spell, Auto Shot, a swing or
+  your pet's attack) at a player who was not targeting you. Before, a player you jumped could still
+  be listed for fighting back.
+- **Your kills:** counted the moment a listed player you are fighting dies, also late in a long
+  fight, and counted again when a soulstone brings them back and you kill them a second time.
+- The record now notes your first move, each death it sees and each honor gain.
+
 ## 0.9.0 (beta)
 First version meant for others to try.
 

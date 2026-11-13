@@ -10,7 +10,7 @@
 --
 -- Who never counts: players of your own faction (duels), anyone in a
 -- battleground or arena (unless you switch that on), and a player you attacked
--- first while they were neither fighting nor targeting you.
+-- first while they were not targeting you.
 --
 -- It also keeps a short record (WarDrumDB.log) of what the game showed during
 -- those fights and at your death, so the detection can be checked against what
@@ -27,6 +27,8 @@ local KILL_WINDOW = 15    -- you died this soon after they were on you: their ki
 local NEAR_FOR = 20       -- the list marks a player as nearby this long after seeing them
 local WARN_AGAIN = 60     -- at most one warning a minute about the same player
 local SCAN_EVERY = 0.5
+local OPEN_WINDOW = 10    -- a fight that starts this soon after your own first move at a player is your doing
+local MINE_AGAIN = 5      -- seeing them die and the honor for it are one kill, not two
 
 local db
 local frame = CreateFrame("Frame")
@@ -133,7 +135,12 @@ local function ReadUnit(unit)
 	if not Plain(Ask(UnitIsPlayer, unit)) then return nil end
 	local hostile = Plain(Ask(UnitIsEnemy, "player", unit))
 	if hostile == nil then hostile = Plain(Ask(UnitCanAttack, "player", unit)) end
-	if not hostile then return nil end
+	if not hostile then
+		-- (a dead player can't be attacked, and the game may stop calling them an enemy: someone on
+		-- the list who lies dead is still who they were)
+		local guid = Plain(Ask(UnitGUID, unit))
+		if not (guid and db and db.players and db.players[guid] and Plain(Ask(UnitIsDeadOrGhost, unit)) == true) then return nil end
+	end
 	local name, second = Ask(UnitName, unit)
 	name = FullName(Plain(name), Plain(second))
 	-- Your own faction can only fight you in a duel: never listed, and remembered by name so the
@@ -393,7 +400,8 @@ local function Look(unit, now, paused)
 	key = key or KeyOf(info)
 	if unit == "target" then lastTargetKey = key end
 	local was = seen[key]
-	if not was or now - (was.logged or 0) > 30 then
+	local diedNow = info.dead == true and not (was and was.info.dead == true) -- (alive, or unseen, a moment ago)
+	if not was or now - (was.logged or 0) > 30 or (was.info.dead == true) ~= (info.dead == true) then
 		Log("seen: " .. UnitLine(info))
 		seen[key] = {info = info, at = now, logged = now}
 	else
@@ -409,8 +417,10 @@ local function Look(unit, now, paused)
 			end
 		end
 		nearAt[key] = now
-		-- you had them targeted, they were fighting you, and they died: your kill
-		if info.dead and key == lastTargetKey and e.lastAttack and time() - e.lastAttack < 60 and (not e.lastMine or time() - e.lastMine > 60) then
+		-- you had them targeted, they were fighting you, and they just died: your kill. (Just died, not
+		-- lying dead: someone brought back by a soulstone and killed again is two kills.)
+		local fought = (inCombat and counted[key]) or (e.lastAttack and time() - e.lastAttack < 60)
+		if info.dead and key == lastTargetKey and diedNow and fought and (not e.lastMine or time() - e.lastMine > MINE_AGAIN) then
 			e.mine = e.mine + 1
 			e.lastMine = time()
 			dirty = true
@@ -595,6 +605,7 @@ local function LogInventory()
 	Log("game: DamageMeterType = " .. keys(Enum and Enum.DamageMeterType))
 	Log("game: DamageMeterSessionType = " .. keys(Enum and Enum.DamageMeterSessionType))
 	Log("game: C_DeathRecap = " .. keys(C_DeathRecap))
+	Log("game: C_Spell.IsSpellHarmful " .. tostring(C_Spell ~= nil and C_Spell.IsSpellHarmful ~= nil))
 end
 
 local triedRecap = {}
@@ -1568,7 +1579,31 @@ local function Upgrade()
 	db.backfilled = nil
 end
 
-local function OnEvent(_, event, arg1)
+-- Your own first move. By the time the game says a fight has started, the player you jumped is
+-- already fighting back, so "who started it" has to be noted before: a harmful spell, Auto Shot,
+-- a swing or your pet's attack, made while you are out of a fight, at an enemy player who is not
+-- targeting you. If a fight follows within OPEN_WINDOW, it is yours, not theirs.
+local opened -- {key, name, at}
+
+local function Harmful(spellID)
+	spellID = Plain(spellID)
+	if not spellID then return false end
+	return Plain(Ask(C_Spell and C_Spell.IsSpellHarmful, spellID)) == true
+end
+
+local function Opened(why)
+	if inCombat or not db then return end
+	local info = ReadUnit("target")
+	if not info or info.dead or info.onMe ~= false then return end
+	local key = KeyOf(info)
+	if not key and not info.name then return end
+	if not opened or opened.key ~= key or GetTime() - opened.at > OPEN_WINDOW then
+		Log("your move (" .. why .. "): " .. UnitLine(info))
+	end
+	opened = {key = key, name = info.name, at = GetTime()}
+end
+
+local function OnEvent(_, event, arg1, arg2, arg3, arg4)
 	if event == "ADDON_LOADED" then
 		if arg1 ~= "WarDrum" then return end
 		WarDrumDB = WarDrumDB or {}
@@ -1594,6 +1629,13 @@ local function OnEvent(_, event, arg1)
 		inCombat, fightStartedAt = true, GetTime()
 		pending, counted, started, startedName, death = {}, {}, {}, {}, nil
 		Log("fight started in " .. Zone())
+		-- You made the first move at a player who was not targeting you: you struck first
+		if opened and GetTime() - opened.at <= OPEN_WINDOW then
+			if opened.key then started[opened.key] = true end
+			if opened.name then startedName[opened.name] = true end
+			Log("you struck first: " .. tostring(opened.name or opened.key) .. " (your move came " .. string.format("%.1f", GetTime() - opened.at) .. "s before the fight)")
+		end
+		opened = nil
 		-- Your target is an enemy player who is neither fighting nor targeting you: you struck first
 		local info = ReadUnit("target")
 		if info and info.fighting == false and info.onMe == false and not info.dead then
@@ -1632,7 +1674,8 @@ local function OnEvent(_, event, arg1)
 		local e = lastTargetKey and db.players[lastTargetKey]
 		local was = lastTargetKey and seen[lastTargetKey]
 		local alive = was and GetTime() - was.at < 1.5 and was.info.dead == false
-		if e and not alive and e.lastAttack and time() - e.lastAttack < 60 and (not e.lastMine or time() - e.lastMine > 60) then
+		Log("honor gained; your target: " .. tostring(e and e.name or "nobody on the list") .. (was and (", last seen dead=" .. tostring(was.info.dead)) or ""))
+		if e and not alive and e.lastAttack and time() - e.lastAttack < 60 and (not e.lastMine or time() - e.lastMine > MINE_AGAIN) then
 			e.mine = e.mine + 1
 			e.lastMine = time()
 			Log("YOUR KILL (honor gained): " .. tostring(e.name))
@@ -1648,6 +1691,15 @@ local function OnEvent(_, event, arg1)
 	elseif event == "NAME_PLATE_UNIT_REMOVED" then
 		local unit = Plain(arg1)
 		if unit then plates[unit] = nil end
+	elseif event == "UNIT_SPELLCAST_SENT" then
+		-- (unit, target name, cast, spell): only your own harmful spells are a first move
+		if not inCombat and Plain(arg1) == "player" and Harmful(arg4) then Opened("a harmful spell") end
+	elseif event == "START_AUTOREPEAT_SPELL" then
+		Opened("Auto Shot")
+	elseif event == "PLAYER_ENTER_COMBAT" then
+		Opened("a swing")
+	elseif event == "PET_ATTACK_START" then
+		Opened("your pet")
 	else -- your target, your focus or what your mouse is over changed
 		local unit = (event == "PLAYER_TARGET_CHANGED" and "target") or (event == "PLAYER_FOCUS_CHANGED" and "focus") or "mouseover"
 		if Look(unit, GetTime(), Paused()) then frame:Show() end
@@ -1660,7 +1712,8 @@ frame:SetScript("OnEvent", function(self, event, ...)
 end)
 for _, event in ipairs({"ADDON_LOADED", "PLAYER_LOGIN", "PLAYER_REGEN_DISABLED", "PLAYER_REGEN_ENABLED", "PLAYER_DEAD", "PLAYER_ALIVE", "PLAYER_UNGHOST",
 	"NAME_PLATE_UNIT_ADDED", "NAME_PLATE_UNIT_REMOVED", "PLAYER_TARGET_CHANGED", "UPDATE_MOUSEOVER_UNIT", "PLAYER_FOCUS_CHANGED",
-	"CHAT_MSG_COMBAT_HONOR_GAIN", "CHAT_MSG_SYSTEM"}) do
+	"CHAT_MSG_COMBAT_HONOR_GAIN", "CHAT_MSG_SYSTEM",
+	"UNIT_SPELLCAST_SENT", "START_AUTOREPEAT_SPELL", "PLAYER_ENTER_COMBAT", "PET_ATTACK_START"}) do
 	pcall(frame.RegisterEvent, frame, event)
 end
 

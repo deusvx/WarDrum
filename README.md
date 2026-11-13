@@ -32,8 +32,8 @@ line on what happened: https://github.com/deusvx/WarDrum/issues
 ## Who never counts
 - **Your own faction.** A duel is not a gank.
 - **Battlegrounds and arenas,** where everyone attacks you (a switch, on by default).
-- **Players you attacked first** while they were neither fighting nor targeting you, even if
-  they fight back and win.
+- **Players you attacked first** while they were not targeting you, even if they fight back
+  and win.
 - Pets, creatures, and anyone who only had you targeted without damaging you.
 
 ## Using it
@@ -73,7 +73,7 @@ Get it from CurseForge, or copy the `WarDrum` folder into
 
 ## Tests
 `tests/run_tests.sh` runs the addon outside the game against a small stand-in for it:
-13 scenarios, from "an enemy merely in view is not an attack" to "what the game hides is never
+14 scenarios, from "an enemy merely in view is not an attack" to "what the game hides is never
 touched". See `tests/README.md`.
 
 ## License
